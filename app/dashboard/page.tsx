@@ -3,26 +3,31 @@
 import { useState, useEffect, useRef } from "react";
 import { useAccount, useConnect, useDisconnect, usePublicClient, useWalletClient } from "wagmi";
 import { injected } from "wagmi/connectors";
+import { ethers } from "ethers";
+
+// Dynamic SDK import — only loads in browser
+async function loadSDK() {
+  const { createInstance, initSDK, SepoliaConfigV2 } = await import("@zama-fhe/relayer-sdk/web");
+  return { createInstance, initSDK, SepoliaConfigV2 };
+}
 
 // ── Contract Config ──────────────────────────────────────────────────────────
 const DARKPOOL_ADDRESS = "0x855dA715F3182f9A105343c91F80ba1B435BfD31" as `0x${string}`;
 const RWA_ADDRESS = "0xd38489433B393F80281f5F59Abd9B82CCacE6194" as `0x${string}`;
+const MATCHING_ENGINE_ADDRESS = "0xEE66574d63535a344A0b044734fC2Ec0Be2a933d" as `0x${string}`;
+const SEPOLIA_SCAN = "https://sepolia.etherscan.io";
 
+// ABI matches SDK output: handles[] + inputProof + remaining args
 const DARKPOOL_ABI = [
   {
     name: "placeEncryptedOrder",
     type: "function",
     stateMutability: "nonpayable",
     inputs: [
-      { name: "encryptedAmount", type: "bytes32" },
-      { name: "amountProof", type: "bytes" },
-      { name: "encryptedPrice", type: "bytes32" },
-      { name: "priceProof", type: "bytes" },
-      { name: "encryptedRiskScore", type: "bytes32" },
-      { name: "riskProof", type: "bytes" },
+      { name: "handles", type: "bytes32[]" },
+      { name: "inputProof", type: "bytes" },
       { name: "rwaToken", type: "address" },
       { name: "side", type: "uint8" },
-      { name: "encryptedMetadata", type: "bytes" },
     ],
     outputs: [{ name: "orderId", type: "uint256" }],
   },
@@ -69,8 +74,17 @@ const red = "#c0392b";
 const SIDES = ["BUY", "SELL"];
 const STATUSES = ["OPEN", "MATCHED", "CANCELLED", "SETTLED"];
 
-function mockEncrypt(value: number): `0x${string}` {
-  return `0x${value.toString(16).padStart(64, "0")}` as `0x${string}`;
+let fheInstance: any = null;
+
+async function getFHEInstance() {
+  if (fheInstance) return fheInstance;
+  const { createInstance, initSDK, SepoliaConfigV2 } = await loadSDK();
+  await initSDK();
+  fheInstance = await createInstance({
+    ...SepoliaConfigV2,
+    network: "sepolia",
+  });
+  return fheInstance;
 }
 
 function Panel({ children, style }: { children: React.ReactNode; style?: React.CSSProperties }) {
@@ -472,6 +486,12 @@ function PlaceOrderView({ isConnected, walletClient, address, publicClient, moun
   const [txHash, setTxHash] = useState("");
   const [txError, setTxError] = useState("");
 
+  const RWA_TOKENS: Record<string, `0x${string}`> = {
+    "cTBILL — US Treasury": RWA_ADDRESS,
+    "cREAL — Real Estate": "0x0000000000000000000000000000000000000000",
+    "cCARBON — Carbon Credit": "0x0000000000000000000000000000000000000000",
+  };
+
   async function handlePlaceOrder() {
     if (!mounted || !walletClient || !address || !publicClient) {
       setTxError("Wallet not ready — try again in a moment");
@@ -488,19 +508,26 @@ function PlaceOrderView({ isConnected, walletClient, address, publicClient, moun
     setTxError("");
 
     try {
-      const encAmount = mockEncrypt(Math.floor(parseFloat(amount) * 1e6));
-      const encPrice = mockEncrypt(Math.floor(parseFloat(price) * 1e6));
-      const encRisk = mockEncrypt(parseInt(riskScore));
-      const proof = "0x" as `0x${string}`;
+      const instance = await getFHEInstance();
+      const rwaToken = RWA_TOKENS[selectedToken];
+
+      const input = instance.createEncryptedInput(DARKPOOL_ADDRESS, address);
+      input.add64(Math.floor(parseFloat(amount) * 1e6));
+      input.add64(Math.floor(parseFloat(price) * 1e6));
+      input.add64(parseInt(riskScore));
 
       setTxStatus("submitting");
+
+      const { handles, inputProof } = await input.encrypt();
+
+      const handlesHex = handles.map((h: Uint8Array) => ethers.hexlify(h)) as `0x${string}`[];
+      const proofHex = ethers.hexlify(inputProof) as `0x${string}`;
 
       const hash = await walletClient.writeContract({
         address: DARKPOOL_ADDRESS,
         abi: DARKPOOL_ABI,
         functionName: "placeEncryptedOrder",
-        args: [encAmount, proof, encPrice, proof, encRisk, proof, RWA_ADDRESS, activeSide === "BUY" ? 0 : 1, proof],
-        gas: 500000n,
+        args: [handlesHex, proofHex, rwaToken, activeSide === "BUY" ? 0 : 1],
       });
 
       setTxHash(hash);
@@ -960,7 +987,7 @@ export default function Dashboard() {
     if (!address || !publicClient) return;
     setLoadingOrders(true);
     try {
-      const ids = (await publicClient.readContract({
+      const ids = (await (publicClient as any).readContract({
         address: DARKPOOL_ADDRESS,
         abi: DARKPOOL_ABI,
         functionName: "getTraderOrders",
@@ -971,17 +998,17 @@ export default function Dashboard() {
           .slice(-10)
           .reverse()
           .map(async (id) => {
-            const meta = (await publicClient.readContract({
+            const meta = await (publicClient as any).readContract({
               address: DARKPOOL_ADDRESS,
               abi: DARKPOOL_ABI,
               functionName: "getOrderMeta",
               args: [id],
-            })) as any[];
+            });
             return {
               id: id.toString(),
-              side: SIDES[meta[2]] || "BUY",
-              status: STATUSES[meta[3]] || "OPEN",
-              blockNumber: meta[4].toString(),
+              side: SIDES[(meta as any)[2]] || "BUY",
+              status: STATUSES[(meta as any)[3]] || "OPEN",
+              blockNumber: (meta as any)[4].toString(),
             };
           }),
       );
@@ -996,12 +1023,12 @@ export default function Dashboard() {
   async function loadTWAP() {
     if (!publicClient) return;
     try {
-      const c = (await publicClient.readContract({
+      const c = await (publicClient as any).readContract({
         address: DARKPOOL_ADDRESS,
         abi: DARKPOOL_ABI,
         functionName: "getTWAPCount",
         args: [RWA_ADDRESS],
-      })) as bigint;
+      });
       setTwapCount(Number(c));
     } catch (e) {
       console.error(e);
@@ -1452,16 +1479,19 @@ export default function Dashboard() {
             color: textMuted,
           }}
         >
-          <span>
-            RWA: <b style={{ color: Y }}>0xd384...6194</b>
-          </span>
-          <span>
-            DARKPOOL: <b style={{ color: Y }}>0x855d...FD31</b>
-          </span>
-          <span>
-            ENGINE: <b style={{ color: Y }}>0xEE66...933d</b>
-          </span>
+          <a href={`${SEPOLIA_SCAN}/address/${RWA_ADDRESS}`} target="_blank" rel="noopener noreferrer" style={{ color: Y, textDecoration: "none", cursor: "none" }}>
+            RWA: <b>0xd384...6194</b> ↗
+          </a>
+          <a href={`${SEPOLIA_SCAN}/address/${DARKPOOL_ADDRESS}`} target="_blank" rel="noopener noreferrer" style={{ color: Y, textDecoration: "none", cursor: "none" }}>
+            DARKPOOL: <b>0x855d...FD31</b> ↗
+          </a>
+          <a href={`${SEPOLIA_SCAN}/address/${MATCHING_ENGINE_ADDRESS}`} target="_blank" rel="noopener noreferrer" style={{ color: Y, textDecoration: "none", cursor: "none" }}>
+            ENGINE: <b>0xEE66...933d</b> ↗
+          </a>
           <span style={{ color: green, marginLeft: "auto", animation: "blink 3s infinite" }}>● LIVE ON SEPOLIA</span>
+          <span style={{ color: Y, opacity: 0.5, fontSize: "0.42rem", letterSpacing: "0.08em" }}>
+            Zama Dev Program Season 2
+          </span>
         </div>
 
         <style>{`

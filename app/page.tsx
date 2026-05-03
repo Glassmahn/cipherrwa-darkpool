@@ -95,6 +95,7 @@ export default function CipherRWALanding() {
   const muted = "#5a4e30";
   const red = "#8b1a1a";
   const blue = "#1a3a6b";
+  const green = "#27ae60";
 
   return (
     <>
@@ -475,9 +476,13 @@ export default function CipherRWALanding() {
                   { label: "DARK POOL CONTRACT", addr: "0x855dA715F3182f9A105343c91F80ba1B435BfD31" },
                   { label: "MATCHING ENGINE", addr: "0xEE66574d63535a344A0b044734fC2Ec0Be2a933d" },
                 ].map((c) => (
-                  <div
+                  <a
                     key={c.label}
+                    href={`https://sepolia.etherscan.io/address/${c.addr}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
                     style={{
+                      display: "block",
                       background: "rgba(26,18,0,0.07)",
                       borderLeft: `3px solid ${Y}`,
                       padding: "0.5rem 0.9rem",
@@ -485,7 +490,12 @@ export default function CipherRWALanding() {
                       fontSize: "0.65rem",
                       letterSpacing: "0.04em",
                       color: ink,
+                      textDecoration: "none",
+                      cursor: "none",
+                      transition: "background 0.2s",
                     }}
+                    onMouseEnter={(e) => (e.currentTarget.style.background = "rgba(245,200,0,0.1)")}
+                    onMouseLeave={(e) => (e.currentTarget.style.background = "rgba(26,18,0,0.07)")}
                   >
                     <span
                       style={{
@@ -496,10 +506,10 @@ export default function CipherRWALanding() {
                         marginBottom: "0.15rem",
                       }}
                     >
-                      {c.label}
+                      {c.label} ↗
                     </span>
                     {c.addr}
-                  </div>
+                  </a>
                 ))}
 
                 <p style={{ marginTop: "1rem", marginBottom: "1.1rem", textAlign: "justify" }}>
@@ -744,16 +754,19 @@ export default function CipherRWALanding() {
             color: "#3a2e0a",
           }}
         >
-          <span>
-            RWA: <span style={{ color: Y }}>0xd384...6194</span>
+          <a href="https://sepolia.etherscan.io/address/0xd38489433B393F80281f5F59Abd9B82CCacE6194" target="_blank" rel="noopener noreferrer" style={{ color: Y, textDecoration: "none", cursor: "none" }}>
+            RWA: 0xd384...6194 ↗
+          </a>
+          <a href="https://sepolia.etherscan.io/address/0x855dA715F3182f9A105343c91F80ba1B435BfD31" target="_blank" rel="noopener noreferrer" style={{ color: Y, textDecoration: "none", cursor: "none" }}>
+            DARKPOOL: 0x855d...FD31 ↗
+          </a>
+          <a href="https://sepolia.etherscan.io/address/0xEE66574d63535a344A0b044734fC2Ec0Be2a933d" target="_blank" rel="noopener noreferrer" style={{ color: Y, textDecoration: "none", cursor: "none" }}>
+            ENGINE: 0xEE66...933d ↗
+          </a>
+          <span style={{ color: green, marginLeft: "auto", animation: "blink 3s infinite" }}>● LIVE ON SEPOLIA</span>
+          <span style={{ color: Y, opacity: 0.6, fontSize: "0.45rem", letterSpacing: "0.1em" }}>
+            Built for Zama Developer Program Mainnet Season 2
           </span>
-          <span>
-            DARKPOOL: <span style={{ color: Y }}>0x855d...FD31</span>
-          </span>
-          <span>
-            ENGINE: <span style={{ color: Y }}>0xEE66...933d</span>
-          </span>
-          <span style={{ color: Y, marginLeft: "auto", animation: "blink 3s infinite" }}>● LIVE ON SEPOLIA</span>
         </div>
 
         <style>{`

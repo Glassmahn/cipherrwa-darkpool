@@ -1,36 +1,112 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# CipherRWA — Confidential Dark Pool for Tokenized Real-World Assets
+
+> **Built for Zama Developer Program Mainnet Season 2**
+
+The first fully on-chain confidential dark pool for tokenized RWAs. All order parameters — price, amount, and investor risk score — are encrypted using **Fully Homomorphic Encryption (FHE)** before touching the chain. No plaintext is ever exposed to any party.
+
+## Architecture
+
+```
+┌─────────────┐     Encrypted Order      ┌──────────────────┐
+│  Investor    │ ──► handles[] + proof ──►│  DarkPool.sol    │
+│  (Browser)   │     (FHEVM SDK)          │  (Sepolia)       │
+└─────────────┘                          └────────┬─────────┘
+                                                  │
+                                    ┌─────────────▼──────────┐
+                                    │  MatchingEngine.sol     │
+                                    │  TFHE.ge() comparison   │
+                                    │  Homorphic matching     │
+                                    └─────────────┬──────────┘
+                                                  │
+                                    ┌─────────────▼──────────┐
+                                    │  Zama Gateway           │
+                                    │  Async decrypt          │
+                                    │  Settlement only        │
+                                    └────────────────────────┘
+```
+
+## Deployed Contracts (Sepolia)
+
+| Contract | Address | SepoliaScan |
+|----------|---------|-------------|
+| RWA Token (cTBILL) | `0xd38489433B393F80281f5F59Abd9B82CCacE6194` | [View ↗](https://sepolia.etherscan.io/address/0xd38489433B393F80281f5F59Abd9B82CCacE6194) |
+| Dark Pool | `0x855dA715F3182f9A105343c91F80ba1B435BfD31` | [View ↗](https://sepolia.etherscan.io/address/0x855dA715F3182f9A105343c91F80ba1B435BfD31) |
+| Matching Engine | `0xEE66574d63535a344A0b044734fC2Ec0Be2a933d` | [View ↗](https://sepolia.etherscan.io/address/0xEE66574d63535a344A0b044734fC2Ec0Be2a933d) |
+
+## Features
+
+- **Confidential Orders** — `euint64` encrypted amounts, prices, and risk scores
+- **Homomorphic Matching** — TFHE comparison operators match orders without decryption
+- **Gateway Settlement** — Async decrypt via Zama Gateway only upon execution
+- **ACL-Gated Decrypt** — Owner-only decryption, no counterparty visibility
+- **RWA Tokenization** — cTBILL, cREAL, cCARBON tokenized asset classes
+- **TWAP Oracle** — Homomorphic accumulator for time-weighted average pricing
+
+## Tech Stack
+
+| Layer | Technology |
+|-------|-----------|
+| Smart Contracts | Solidity 0.8.24, FHEVM v0.6, OpenZeppelin |
+| Frontend | Next.js 16, React 19, Tailwind CSS 4 |
+| Wallet | wagmi v3, viem v2, injected connectors |
+| Encryption | @zama-fhe/relayer-sdk v0.4.2 |
+| Network | Sepolia Testnet (Chain ID 11155111) |
+| Deployment | Vercel (frontend), Hardhat (contracts) |
 
 ## Getting Started
 
-First, run the development server:
+### Prerequisites
+
+- Node.js 18+
+- MetaMask or compatible EIP-1193 wallet with Sepolia ETH
+
+### Frontend
 
 ```bash
+npm install
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open [http://localhost:3000](http://localhost:3000) to access the dashboard.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+### Contracts (Hardhat)
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```bash
+# Compile
+npx hardhat compile
 
-## Learn More
+# Deploy to Sepolia
+npx hardhat deploy --network sepolia
 
-To learn more about Next.js, take a look at the following resources:
+# Run tests
+npx hardhat test
+```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## FHE Encryption Flow
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+1. User enters order parameters (amount, price, risk score)
+2. `@zama-fhe/relayer-sdk` encrypts values via `createEncryptedInput().add64()`
+3. SDK generates ZK input proof and submits to Zama relayer
+4. `placeEncryptedOrder()` is called with `handles[]` + `inputProof`
+5. MatchingEngine performs homomorphic comparison via `TFHE.ge()`
+6. Settlement triggers `Gateway.requestDecryption()` for matched orders
+7. Plaintext revealed only to matched counterparties
 
-## Deploy on Vercel
+## Security Checklist
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+- [x] ACL correctly set on encrypted values (owner-only decrypt)
+- [x] No reentrancy vectors in settlement flow
+- [x] Decrypt rights granted only to authorized parties
+- [x] Zero plaintext exposure on-chain
+- [x] Input proof verification via InputVerifier contract
+- [x] Gateway async decrypt pattern for settlement
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Links
+
+- [Live Dashboard (Vercel)](https://cipherrwa-darkpool.vercel.app)
+- [Demo Video (YouTube)]()
+- [Zama Developer Program](https://forms.zama.org/developer-program-mainnet-season2-builder-track)
+
+## License
+
+MIT
