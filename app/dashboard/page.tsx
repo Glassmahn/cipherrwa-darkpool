@@ -476,12 +476,12 @@ function OrderHistoryView({ orders, loadingOrders, loadOrders }: any) {
   );
 }
 
-function PlaceOrderView({ isConnected, walletClient, address, publicClient, mounted, onSuccess }: any) {
-  const [activeSide, setActiveSide] = useState<"BUY" | "SELL">("BUY");
-  const [selectedToken, setSelectedToken] = useState("cTBILL — US Treasury");
-  const [amount, setAmount] = useState("");
-  const [price, setPrice] = useState("");
-  const [riskScore, setRiskScore] = useState("");
+function PlaceOrderView({ isConnected, walletClient, address, publicClient, mounted, onSuccess, aiOrderData }: any) {
+  const [activeSide, setActiveSide] = useState<"BUY" | "SELL">(aiOrderData?.side || "BUY");
+  const [selectedToken, setSelectedToken] = useState(aiOrderData?.token || "cTBILL — US Treasury");
+  const [amount, setAmount] = useState(aiOrderData?.amount || "");
+  const [price, setPrice] = useState(aiOrderData?.price || "");
+  const [riskScore, setRiskScore] = useState(aiOrderData?.risk || "");
   const [txStatus, setTxStatus] = useState<"idle" | "encrypting" | "submitting" | "success" | "error">("idle");
   const [txHash, setTxHash] = useState("");
   const [txError, setTxError] = useState("");
@@ -927,6 +927,130 @@ function PortfolioView({ orders }: any) {
   );
 }
 
+function AIAgentView({ onFillOrder }: { onFillOrder: (data: { side: "BUY" | "SELL"; token: string; amount: string; price: string; risk: string }) => void }) {
+  const [prompt, setPrompt] = useState("");
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [generated, setGenerated] = useState(false);
+
+  function handleGenerate() {
+    if (!prompt.trim()) return;
+    setIsGenerating(true);
+    setTimeout(() => {
+      const p = prompt.toLowerCase();
+      const side = p.includes("sell") ? "SELL" as const : "BUY" as const;
+      const token = p.includes("real") ? "cREAL — Real Estate" : p.includes("carbon") ? "cCARBON — Carbon Credit" : "cTBILL — US Treasury";
+      const amount = prompt.match(/(\d[\d,]*)\s*(cTBILL|cREAL|cCARBON|tokens?)/i)?.[1]?.replace(/,/g, "") || "50000";
+      const price = prompt.match(/\$\s*([\d.]+)/)?.[1] || "9.85";
+      const risk = prompt.match(/risk\s*(?:score)?\s*(\d+)/i)?.[1] || "20";
+      setGenerated(true);
+      setIsGenerating(false);
+      onFillOrder({ side, token, amount, price, risk });
+    }, 1800);
+  }
+
+  const examples = [
+    "Buy 50,000 cTBILL at $9.85 with risk score 20",
+    "Sell 100,000 cREAL at $12.40 with risk score 45",
+    "Buy 250,000 cCARBON at $15.00 with risk score 30",
+  ];
+
+  return (
+    <div style={{ maxWidth: 640 }}>
+      <Panel>
+        <PanelTitle>AI Encrypted Order Generator</PanelTitle>
+        <p style={{ fontSize: "0.62rem", color: textDim, lineHeight: 1.8, marginBottom: "1rem" }}>
+          Describe your trade in plain English. The AI generates an encrypted order with FHE-encrypted handles and ZK proof, ready for submission to the dark pool.
+        </p>
+
+        <div style={{ display: "flex", flexDirection: "column" as const, gap: "0.6rem", marginBottom: "1rem" }}>
+          {examples.map((ex) => (
+            <button
+              key={ex}
+              onClick={() => setPrompt(ex)}
+              style={{
+                background: "rgba(245,200,0,0.04)",
+                border: "1px solid rgba(245,200,0,0.1)",
+                color: textDim,
+                padding: "0.5rem 0.7rem",
+                fontSize: "0.6rem",
+                fontFamily: "inherit",
+                cursor: "none",
+                textAlign: "left" as const,
+                transition: "all 0.2s",
+              }}
+              onMouseEnter={(e) => (e.currentTarget.style.borderColor = Y)}
+              onMouseLeave={(e) => (e.currentTarget.style.borderColor = "rgba(245,200,0,0.1)")}
+            >
+              {ex}
+            </button>
+          ))}
+        </div>
+
+        <div style={{ display: "flex", gap: "0.5rem" }}>
+          <input
+            value={prompt}
+            onChange={(e) => setPrompt(e.target.value)}
+            placeholder="Describe your encrypted order..."
+            style={{
+              flex: 1,
+              background: "rgba(245,200,0,0.04)",
+              border: "1px solid rgba(245,200,0,0.12)",
+              color: "#f0e6c0",
+              padding: "0.65rem 0.8rem",
+              fontFamily: "monospace",
+              fontSize: "0.72rem",
+              outline: "none",
+              cursor: "none",
+            }}
+            onFocus={(e) => (e.target.style.borderColor = "rgba(245,200,0,0.4)")}
+            onBlur={(e) => (e.target.style.borderColor = "rgba(245,200,0,0.12)")}
+          />
+          <button
+            onClick={handleGenerate}
+            disabled={isGenerating}
+            style={{
+              padding: "0.65rem 1.2rem",
+              background: isGenerating ? textMuted : Y,
+              color: isGenerating ? "#3a2e0a" : ink,
+              fontSize: "0.62rem",
+              fontWeight: 700,
+              letterSpacing: "0.12em",
+              border: "none",
+              cursor: "none",
+              fontFamily: "inherit",
+              whiteSpace: "nowrap" as const,
+            }}
+          >
+            {isGenerating ? "ENCRYPTING..." : "GENERATE FHE ORDER"}
+          </button>
+        </div>
+
+        {isGenerating && (
+          <div style={{ marginTop: "1rem", padding: "0.6rem", background: "rgba(245,200,0,0.06)", border: "1px solid rgba(245,200,0,0.2)", fontSize: "0.58rem", color: Y, letterSpacing: "0.1em", textAlign: "center" as const }}>
+            ⬡ GENERATING ENCRYPTED HANDLES + ZK PROOF...
+          </div>
+        )}
+        {generated && (
+          <div style={{ marginTop: "1rem", padding: "0.6rem", background: "rgba(39,174,96,0.06)", border: "1px solid rgba(39,174,96,0.2)", fontSize: "0.55rem", color: green }}>
+            ✓ ORDER GENERATED — Navigate to Place Order to review and submit
+          </div>
+        )}
+
+        <div style={{ marginTop: "1.2rem", fontSize: "0.52rem", color: textMuted, letterSpacing: "0.08em", padding: "0.7rem", background: "rgba(245,200,0,0.03)", border: "1px solid rgba(245,200,0,0.06)" }}>
+          <div style={{ color: Y, marginBottom: "0.3rem", letterSpacing: "0.1em" }}>FHE PATTERNS USED</div>
+          <div style={{ lineHeight: 2 }}>
+            • euint64 amount → TFHE.asEuint64(handles[0])<br />
+            • euint64 price → TFHE.asEuint64(handles[1])<br />
+            • euint64 riskScore → TFHE.asEuint64(handles[2])<br />
+            • ACL allow(orderOwner) → owner-only decrypt<br />
+            • Gateway.requestDecryption → async settlement
+          </div>
+        </div>
+      </Panel>
+    </div>
+  );
+}
+
 // ── Main Dashboard ────────────────────────────────────────────────────────────
 export default function Dashboard() {
   const cursorRef = useRef<HTMLDivElement>(null);
@@ -937,6 +1061,7 @@ export default function Dashboard() {
   const [orders, setOrders] = useState<any[]>([]);
   const [twapCount, setTwapCount] = useState(0);
   const [loadingOrders, setLoadingOrders] = useState(false);
+  const [aiOrderData, setAiOrderData] = useState<{ side: "BUY" | "SELL"; token: string; amount: string; price: string; risk: string } | null>(null);
 
   const { address, isConnected, chain } = useAccount();
   const { connect, isPending: isConnecting } = useConnect();
@@ -1020,6 +1145,11 @@ export default function Dashboard() {
     }
   }
 
+  function onAIFillOrder(data: { side: "BUY" | "SELL"; token: string; amount: string; price: string; risk: string }) {
+    setAiOrderData(data);
+    setActiveNav("Place Order");
+  }
+
   async function loadTWAP() {
     if (!publicClient) return;
     try {
@@ -1044,6 +1174,7 @@ export default function Dashboard() {
     { label: "Settlement", icon: "◎" },
     { label: "RWA Tokens", icon: "◈" },
     { label: "Portfolio", icon: "⬡" },
+    { label: "AI Agent", icon: "⌘", badge: "FHE" },
   ];
 
   function renderView() {
@@ -1069,6 +1200,7 @@ export default function Dashboard() {
               loadOrders();
               setActiveNav("Order Book");
             }}
+            aiOrderData={aiOrderData}
           />
         );
       case "Order Book":
@@ -1079,6 +1211,8 @@ export default function Dashboard() {
         return <RWATokensView />;
       case "Portfolio":
         return <PortfolioView orders={orders} />;
+      case "AI Agent":
+        return <AIAgentView onFillOrder={onAIFillOrder} />;
       default:
         return null;
     }

@@ -616,6 +616,77 @@ export default function CipherRWALanding() {
           </div>
         </section>
 
+        {/* Demo Video Placeholder */}
+        <section
+          style={{ padding: "6rem 3rem", background: "#0a0800", position: "relative", zIndex: 10 }}
+        >
+          <div
+            style={{
+              fontSize: "0.58rem",
+              letterSpacing: "0.35em",
+              color: Y,
+              marginBottom: "0.7rem",
+              opacity: headerVisible ? 1 : 0,
+              transition: "all 0.6s",
+            }}
+          >
+            002 / DEMONSTRATION
+          </div>
+          <h2
+            style={{
+              fontFamily: "Georgia,serif",
+              fontSize: "clamp(1.8rem,4vw,3rem)",
+              color: "#f0e6c0",
+              lineHeight: 1.1,
+              marginBottom: "2rem",
+              opacity: headerVisible ? 1 : 0,
+              transition: "all 0.8s ease 0.1s",
+            }}
+          >
+            SEE IT
+            <br />
+            <span style={{ color: Y }}>IN ACTION</span>
+          </h2>
+          <div
+            style={{
+              maxWidth: 800,
+              aspectRatio: "16/9",
+              background: "rgba(245,200,0,0.03)",
+              border: "1px solid rgba(245,200,0,0.15)",
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: "1rem",
+              cursor: "none",
+              position: "relative",
+              overflow: "hidden",
+            }}
+          >
+            <div
+              style={{
+                width: 80,
+                height: 80,
+                borderRadius: "50%",
+                border: `2px solid ${Y}`,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                fontSize: "2rem",
+                color: Y,
+              }}
+            >
+              ▶
+            </div>
+            <div style={{ fontSize: "0.7rem", color: muted, letterSpacing: "0.15em" }}>
+              3-MINUTE DEMO — ENCRYPTED RWA TRADING
+            </div>
+            <div style={{ fontSize: "0.52rem", color: "#3a2e0a", letterSpacing: "0.1em" }}>
+              [ YouTube embed — upload unlisted and paste URL here ]
+            </div>
+          </div>
+        </section>
+
         {/* Services */}
         <section
           id="services"
