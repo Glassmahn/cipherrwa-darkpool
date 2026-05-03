@@ -762,7 +762,24 @@ function PlaceOrderView({ isConnected, walletClient, address, publicClient, moun
   );
 }
 
-function SettlementView() {
+function SettlementView({ orders, address }: any) {
+  const [decryptStatus, setDecryptStatus] = useState<"idle" | "decrypting" | "done" | "error">("idle");
+  const [decryptResult, setDecryptResult] = useState("");
+
+  async function handleDecrypt() {
+    if (!address) return;
+    setDecryptStatus("decrypting");
+    setDecryptResult("");
+    try {
+      const instance = await getFHEInstance();
+      const decrypted = await instance.decrypt(DARKPOOL_ADDRESS, address);
+      setDecryptResult(JSON.stringify(decrypted, null, 2));
+      setDecryptStatus("done");
+    } catch (e: any) {
+      setDecryptStatus("error");
+    }
+  }
+
   return (
     <Panel>
       <PanelTitle>Settlement — Gateway Async Decrypt</PanelTitle>
@@ -779,6 +796,7 @@ function SettlementView() {
             padding: "1rem",
             fontFamily: "monospace",
             fontSize: "0.65rem",
+            marginBottom: "1.2rem",
           }}
         >
           <div style={{ color: Y, marginBottom: "0.5rem", letterSpacing: "0.1em" }}>SETTLEMENT FLOW</div>
@@ -794,6 +812,48 @@ function SettlementView() {
             5. Amounts revealed only to matched parties
           </div>
         </div>
+
+        <div style={{ marginBottom: "1rem" }}>
+          <div style={{ fontSize: "0.6rem", color: Y, letterSpacing: "0.15em", marginBottom: "0.5rem" }}>
+            DECRYPT YOUR ENCRYPTED DATA
+          </div>
+          <p style={{ fontSize: "0.58rem", color: textDim, marginBottom: "0.8rem" }}>
+            Use the FHEVM SDK to reencrypt and decrypt your own order data. Only your wallet can decrypt values where ACL permissions have been granted.
+          </p>
+          <button
+            onClick={handleDecrypt}
+            disabled={decryptStatus === "decrypting"}
+            style={{
+              padding: "0.65rem 1.4rem",
+              background: decryptStatus === "decrypting" ? textMuted : Y,
+              color: decryptStatus === "decrypting" ? "#3a2e0a" : ink,
+              fontSize: "0.62rem",
+              fontWeight: 700,
+              letterSpacing: "0.12em",
+              border: "none",
+              cursor: "none",
+              fontFamily: "inherit",
+            }}
+          >
+            {decryptStatus === "decrypting" ? "DECRYPTING..." : "DECRYPT MY ORDERS"}
+          </button>
+        </div>
+
+        {decryptStatus === "done" && (
+          <div style={{ marginTop: "0.8rem", padding: "0.6rem", background: "rgba(39,174,96,0.06)", border: "1px solid rgba(39,174,96,0.2)", fontSize: "0.55rem", color: green }}>
+            ✓ DECRYPT SUCCESSFUL — Your encrypted values have been revealed
+            {decryptResult && (
+              <pre style={{ marginTop: "0.5rem", fontSize: "0.52rem", fontFamily: "monospace", overflow: "auto", maxHeight: 120 }}>
+                {decryptResult}
+              </pre>
+            )}
+          </div>
+        )}
+        {decryptStatus === "error" && (
+          <div style={{ marginTop: "0.8rem", padding: "0.6rem", background: "rgba(192,57,43,0.06)", border: "1px solid rgba(192,57,43,0.2)", fontSize: "0.55rem", color: red }}>
+            DECRYPT FAILED — No ACL permission or no encrypted data for this address
+          </div>
+        )}
       </div>
     </Panel>
   );
@@ -1108,6 +1168,32 @@ export default function Dashboard() {
     }
   }, [mounted, isConnected, address]);
 
+  useEffect(() => {
+    if (!mounted || !publicClient) return;
+    const unwatch = publicClient.watchContractEvent({
+      address: DARKPOOL_ADDRESS,
+      abi: [
+        {
+          name: "OrderPlaced",
+          type: "event",
+          inputs: [
+            { name: "orderId", type: "uint256" },
+            { name: "trader", type: "address" },
+            { name: "rwaToken", type: "address" },
+            { name: "side", type: "uint8" },
+            { name: "timestamp", type: "uint256" },
+          ],
+        },
+      ] as const,
+      eventName: "OrderPlaced",
+      onLogs: () => {
+        loadOrders();
+        setTwapCount((prev) => prev + 1);
+      },
+    });
+    return () => unwatch();
+  }, [mounted, publicClient]);
+
   async function loadOrders() {
     if (!address || !publicClient) return;
     setLoadingOrders(true);
@@ -1206,7 +1292,7 @@ export default function Dashboard() {
       case "Order Book":
         return <OrderHistoryView orders={orders} loadingOrders={loadingOrders} loadOrders={loadOrders} />;
       case "Settlement":
-        return <SettlementView />;
+        return <SettlementView orders={orders} address={address} />;
       case "RWA Tokens":
         return <RWATokensView />;
       case "Portfolio":

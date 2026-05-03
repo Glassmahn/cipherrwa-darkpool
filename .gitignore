@@ -41,3 +41,9 @@ yarn-error.log*
 next-env.d.ts
 
 .vercel
+
+# hardhat
+/artifacts
+/cache
+/fhevmTemp
+/types
