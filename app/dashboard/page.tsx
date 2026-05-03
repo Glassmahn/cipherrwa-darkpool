@@ -493,8 +493,13 @@ function PlaceOrderView({ isConnected, walletClient, address, publicClient, moun
   };
 
   async function handlePlaceOrder() {
-    if (!mounted || !walletClient || !address || !publicClient) {
-      setTxError("Wallet not ready — try again in a moment");
+    if (!isConnected) {
+      setTxError("Wallet not connected — click CONNECT WALLET in the sidebar");
+      setTxStatus("error");
+      return;
+    }
+    if (!walletClient) {
+      setTxError("Wallet client not loaded — reconnect your wallet");
       setTxStatus("error");
       return;
     }
