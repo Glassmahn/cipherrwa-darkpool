@@ -1128,11 +1128,11 @@ export default function Dashboard() {
   const [loadingOrders, setLoadingOrders] = useState(false);
   const [aiOrderData, setAiOrderData] = useState<{ side: "BUY" | "SELL"; token: string; amount: string; price: string; risk: string } | null>(null);
 
-  const { address, isConnected, chain } = useAccount();
+  const { address, isConnected, chain, connector } = useAccount();
   const { connect, isPending: isConnecting } = useConnect();
   const { disconnect } = useDisconnect();
   const publicClient = usePublicClient();
-  const { data: walletClient } = useWalletClient();
+  const { data: walletClient } = useWalletClient({ connector: connector as any });
 
   useEffect(() => {
     setMounted(true);
