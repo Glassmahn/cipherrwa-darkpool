@@ -1,23 +1,27 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import { useAccount, useConnect, useDisconnect, usePublicClient, useWalletClient } from "wagmi";
+import { useAccount, useConnect, useDisconnect, usePublicClient, useSwitchChain } from "wagmi";
+import { getWalletClient } from "@wagmi/core";
+import { config } from "../providers";
 import { injected } from "wagmi/connectors";
+import { sepolia } from "wagmi/chains";
 import { ethers } from "ethers";
 
 // Dynamic SDK import — only loads in browser
 async function loadSDK() {
-  const { createInstance, initSDK, SepoliaConfigV2 } = await import("@zama-fhe/relayer-sdk/web");
-  return { createInstance, initSDK, SepoliaConfigV2 };
+  const { createInstance, initSDK, SepoliaConfig } = await import("@zama-fhe/relayer-sdk/web");
+  return { createInstance, initSDK, SepoliaConfig };
 }
 
-// ── Contract Config ──────────────────────────────────────────────────────────
-const DARKPOOL_ADDRESS = "0x855dA715F3182f9A105343c91F80ba1B435BfD31" as `0x${string}`;
-const RWA_ADDRESS = "0xd38489433B393F80281f5F59Abd9B82CCacE6194" as `0x${string}`;
-const MATCHING_ENGINE_ADDRESS = "0xEE66574d63535a344A0b044734fC2Ec0Be2a933d" as `0x${string}`;
+const DARKPOOL_ADDRESS = "0x318F23D39fd29e31a503A2A190Cff95C069E4e77" as `0x${string}`;
+const RWA_ADDRESS = "0x2e74A6F0e739B6F61f8c143385d4D80e8f3D9164" as `0x${string}`;
+const RWA_CREAL_ADDRESS = "0x43f6F3D8e12265ABc4eCa455662ac8ce2188F5B6" as `0x${string}`;
+const RWA_CCARBON_ADDRESS = "0x93F67cEa9B0f231AA4d23e494066530Ab0A8fB3b" as `0x${string}`;
+const MATCHING_ENGINE_ADDRESS = "0xD482e2286efd826E42609A9E9641434c5a696f0B" as `0x${string}`;
 const SEPOLIA_SCAN = "https://sepolia.etherscan.io";
 
-// ABI matches SDK output: handles[] + inputProof + remaining args
+// ABI for DarkPool + MatchingEngine
 const DARKPOOL_ABI = [
   {
     name: "placeEncryptedOrder",
@@ -53,6 +57,92 @@ const DARKPOOL_ABI = [
     ],
   },
   {
+    name: "getOpenOrdersForToken",
+    type: "function",
+    stateMutability: "view",
+    inputs: [{ name: "rwaToken", type: "address" }],
+    outputs: [{ name: "", type: "uint256[]" }],
+  },
+  {
+    name: "executeMatch",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "buyOrderId", type: "uint256" },
+      { name: "sellOrderId", type: "uint256" },
+    ],
+    outputs: [],
+  },
+  {
+    name: "onSettlementCallback",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "buyOrderId", type: "uint256" },
+      { name: "sellOrderId", type: "uint256" },
+      { name: "buyAmount", type: "uint64" },
+      { name: "sellAmount", type: "uint64" },
+      { name: "price", type: "uint64" },
+    ],
+    outputs: [],
+  },
+  {
+    name: "settlements",
+    type: "function",
+    stateMutability: "view",
+    inputs: [{ name: "", type: "uint256" }],
+    outputs: [
+      { name: "buyAmount", type: "uint64" },
+      { name: "sellAmount", type: "uint64" },
+      { name: "price", type: "uint64" },
+      { name: "settled", type: "bool" },
+    ],
+  },
+] as const;
+
+const MATCHING_ENGINE_ABI = [
+  {
+    name: "computeMatch",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "buyOrderId", type: "uint256" },
+      { name: "sellOrderId", type: "uint256" },
+    ],
+    outputs: [{ name: "matchHandle", type: "uint256" }],
+  },
+  {
+    name: "confirmMatch",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "buyOrderId", type: "uint256" },
+      { name: "sellOrderId", type: "uint256" },
+    ],
+    outputs: [],
+  },
+  {
+    name: "autoComputeMatch",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [{ name: "rwaToken", type: "address" }],
+    outputs: [
+      { name: "buyOrderId", type: "uint256" },
+      { name: "sellOrderId", type: "uint256" },
+      { name: "matchHandle", type: "uint256" },
+    ],
+  },
+  {
+    name: "matchResults",
+    type: "function",
+    stateMutability: "view",
+    inputs: [
+      { name: "", type: "uint256" },
+      { name: "", type: "uint256" },
+    ],
+    outputs: [{ name: "", type: "uint256" }],
+  },
+  {
     name: "getTWAPCount",
     type: "function",
     stateMutability: "view",
@@ -74,15 +164,61 @@ const red = "#c0392b";
 const SIDES = ["BUY", "SELL"];
 const STATUSES = ["OPEN", "MATCHED", "CANCELLED", "SETTLED"];
 
+const RWA_TOKEN_NAMES: Record<string, string> = {
+  "0x2e74a6f0e739b6f61f8c143385d4d80e8f3d9164": "cTBILL",
+  "0x43f6f3d8e12265abc4eca455662ac8ce2188f5b6": "cREAL",
+  "0x93f67cea9b0f231aa4d23e494066530ab0a8fb3b": "cCARBON",
+};
+
+function getTokenName(orderId: string, rwaToken: string): string {
+  const labels = typeof window !== "undefined" ? JSON.parse(localStorage.getItem("cipherRwa_tokenLabels") || "{}") : {};
+  if (labels[orderId]) return labels[orderId];
+  const known = RWA_TOKEN_NAMES[rwaToken.toLowerCase()];
+  if (known) return known;
+  return `${rwaToken.slice(0, 6)}...${rwaToken.slice(-4)}`;
+}
+
 let fheInstance: any = null;
+
+async function switchToSepolia(): Promise<boolean> {
+  if (typeof window === "undefined" || !(window as any).ethereum) return false;
+  try {
+    await (window as any).ethereum.request({
+      method: "wallet_switchEthereumChain",
+      params: [{ chainId: "0x" + BigInt(11155111).toString(16) }],
+    });
+    return true;
+  } catch (e: any) {
+    if (e.code === 4902) {
+      try {
+        await (window as any).ethereum.request({
+          method: "wallet_addEthereumChain",
+          params: [
+            {
+              chainId: "0xaa36a7",
+              chainName: "Sepolia",
+              nativeCurrency: { name: "Sepolia ETH", symbol: "ETH", decimals: 18 },
+              rpcUrls: ["https://ethereum-sepolia-rpc.publicnode.com"],
+              blockExplorerUrls: ["https://sepolia.etherscan.io"],
+            },
+          ],
+        });
+        return true;
+      } catch {
+        return false;
+      }
+    }
+    return false;
+  }
+}
 
 async function getFHEInstance() {
   if (fheInstance) return fheInstance;
-  const { createInstance, initSDK, SepoliaConfigV2 } = await loadSDK();
+  const { createInstance, initSDK, SepoliaConfig } = await loadSDK();
   await initSDK();
   fheInstance = await createInstance({
-    ...SepoliaConfigV2,
-    network: "sepolia",
+    ...SepoliaConfig,
+    network: "https://ethereum-sepolia-rpc.publicnode.com",
   });
   return fheInstance;
 }
@@ -320,7 +456,7 @@ function OverviewView({ orders, twapCount, barsVisible, onPlaceOrder }: any) {
               >
                 <div>
                   <div style={{ fontSize: "0.62rem", fontFamily: "monospace" }}>Order #{o.id}</div>
-                  <div style={{ fontSize: "0.52rem", color: textDim, marginTop: "0.15rem" }}>cTBILL · {o.side}</div>
+                  <div style={{ fontSize: "0.52rem", color: textDim, marginTop: "0.15rem" }}>{getTokenName(o.id, o.rwaToken)} · {o.side}</div>
                 </div>
                 <div style={{ textAlign: "right" as const }}>
                   <StatusBadge status={o.status} />
@@ -448,7 +584,7 @@ function OrderHistoryView({ orders, loadingOrders, loadOrders }: any) {
             >
               <div style={{ fontSize: "0.62rem", fontFamily: "monospace", color: Y }}>#{o.id}</div>
               <div style={{ fontSize: "0.62rem", fontFamily: "monospace" }}>
-                cTBILL
+                {getTokenName(o.id, o.rwaToken)}
                 <EncTag />
               </div>
               <div style={{ fontSize: "0.62rem", fontFamily: "monospace", color: o.side === "BUY" ? green : red }}>
@@ -476,7 +612,7 @@ function OrderHistoryView({ orders, loadingOrders, loadOrders }: any) {
   );
 }
 
-function PlaceOrderView({ isConnected, walletClient, address, publicClient, mounted, onSuccess, aiOrderData }: any) {
+function PlaceOrderView({ isConnected, connector, address, chain, publicClient, mounted, onSuccess, aiOrderData }: any) {
   const [activeSide, setActiveSide] = useState<"BUY" | "SELL">(aiOrderData?.side || "BUY");
   const [selectedToken, setSelectedToken] = useState(aiOrderData?.token || "cTBILL — US Treasury");
   const [amount, setAmount] = useState(aiOrderData?.amount || "");
@@ -486,20 +622,15 @@ function PlaceOrderView({ isConnected, walletClient, address, publicClient, moun
   const [txHash, setTxHash] = useState("");
   const [txError, setTxError] = useState("");
 
-  const RWA_TOKENS: Record<string, `0x${string}`> = {
+  const RWA_TOKEN_MAP: Record<string, `0x${string}`> = {
     "cTBILL — US Treasury": RWA_ADDRESS,
-    "cREAL — Real Estate": "0x0000000000000000000000000000000000000000",
-    "cCARBON — Carbon Credit": "0x0000000000000000000000000000000000000000",
+    "cREAL — Real Estate": RWA_CREAL_ADDRESS,
+    "cCARBON — Carbon Credit": RWA_CCARBON_ADDRESS,
   };
 
   async function handlePlaceOrder() {
-    if (!isConnected) {
+    if (!isConnected || !connector || !address) {
       setTxError("Wallet not connected — click CONNECT WALLET in the sidebar");
-      setTxStatus("error");
-      return;
-    }
-    if (!walletClient) {
-      setTxError("Wallet client not loaded — reconnect your wallet");
       setTxStatus("error");
       return;
     }
@@ -509,12 +640,19 @@ function PlaceOrderView({ isConnected, walletClient, address, publicClient, moun
       return;
     }
 
+    if (chain && chain.id !== sepolia.id) {
+      setTxError(`Wrong network (ID: ${chain.id}). Switch to Sepolia (11155111) in your wallet, then retry.`);
+      setTxStatus("error");
+      return;
+    }
+
     setTxStatus("encrypting");
     setTxError("");
 
     try {
+      const wc = await getWalletClient(config, { connector });
       const instance = await getFHEInstance();
-      const rwaToken = RWA_TOKENS[selectedToken];
+      const rwaToken = RWA_TOKEN_MAP[selectedToken];
 
       const input = instance.createEncryptedInput(DARKPOOL_ADDRESS, address);
       input.add64(Math.floor(parseFloat(amount) * 1e6));
@@ -528,12 +666,40 @@ function PlaceOrderView({ isConnected, walletClient, address, publicClient, moun
       const handlesHex = handles.map((h: Uint8Array) => ethers.hexlify(h)) as `0x${string}`[];
       const proofHex = ethers.hexlify(inputProof) as `0x${string}`;
 
-      const hash = await walletClient.writeContract({
-        address: DARKPOOL_ADDRESS,
-        abi: DARKPOOL_ABI,
-        functionName: "placeEncryptedOrder",
-        args: [handlesHex, proofHex, rwaToken, activeSide === "BUY" ? 0 : 1],
+      const iface = new ethers.Interface([
+        "function placeEncryptedOrder(bytes32[] handles, bytes inputProof, address rwaToken, uint8 side) returns (uint256)"
+      ]);
+      const data = iface.encodeFunctionData("placeEncryptedOrder", [handlesHex, proofHex, rwaToken, activeSide === "BUY" ? 0 : 1]);
+
+      const hash = await (wc as any).sendTransaction({
+        to: DARKPOOL_ADDRESS,
+        data,
+        gas: BigInt(3_000_000),
       });
+
+      // Parse tx receipt to get the orderId from OrderPlaced event
+      try {
+        const receipt = await (wc as any).waitForTransactionReceipt?.(hash) ||
+          await publicClient?.waitForTransactionReceipt({ hash });
+        if (receipt?.logs) {
+          const orderPlacedIface = new ethers.Interface([
+            "event OrderPlaced(uint256 orderId, address trader, address rwaToken, uint8 side, uint256 timestamp)"
+          ]);
+          for (const log of receipt.logs) {
+            try {
+              const decoded = orderPlacedIface.parseLog({ topics: log.topics as string[], data: log.data as string });
+              if (decoded && decoded.name === "OrderPlaced") {
+                const shortName = selectedToken.split(" — ")[0];
+                const orderId = decoded.args[0].toString();
+                const labels = JSON.parse(localStorage.getItem("cipherRwa_tokenLabels") || "{}");
+                labels[orderId] = shortName;
+                localStorage.setItem("cipherRwa_tokenLabels", JSON.stringify(labels));
+                break;
+              }
+            } catch {}
+          }
+        }
+      } catch {}
 
       setTxHash(hash);
       setTxStatus("success");
@@ -767,104 +933,185 @@ function PlaceOrderView({ isConnected, walletClient, address, publicClient, moun
   );
 }
 
-function SettlementView({ orders, address }: any) {
-  const [decryptStatus, setDecryptStatus] = useState<"idle" | "decrypting" | "done" | "error">("idle");
-  const [decryptResult, setDecryptResult] = useState("");
+function SettlementView({ orders, address, connector, isConnected, chain, publicClient, onMatchSuccess }: any) {
+  const [matchStatus, setMatchStatus] = useState<"idle" | "matching" | "matched" | "error">("idle");
+  const [matchResult, setMatchResult] = useState("");
+  const [matchedOrders, setMatchedOrders] = useState<any[]>([]);
 
-  async function handleDecrypt() {
-    if (!address) return;
-    setDecryptStatus("decrypting");
-    setDecryptResult("");
+  async function handleMatchOrders() {
+    if (!isConnected || !connector || !address) {
+      setMatchStatus("error");
+      setMatchResult("Wallet not connected");
+      return;
+    }
+
+    const buyOrder = orders.find((o: any) => o.side === "BUY" && o.status === "OPEN");
+    const sellOrder = orders.find((o: any) => o.side === "SELL" && o.status === "OPEN");
+
+    if (!buyOrder || !sellOrder) {
+      setMatchStatus("error");
+      setMatchResult("Need at least one OPEN BUY and one OPEN SELL order");
+      return;
+    }
+
+    setMatchStatus("matching");
+    setMatchResult("");
+
     try {
-      const instance = await getFHEInstance();
-      const decrypted = await instance.decrypt(DARKPOOL_ADDRESS, address);
-      setDecryptResult(JSON.stringify(decrypted, null, 2));
-      setDecryptStatus("done");
+      const wc = await getWalletClient(config, { connector });
+
+      // confirmMatch auto-computes if needed
+      const iface = new ethers.Interface([
+        "function confirmMatch(uint256 buyOrderId, uint256 sellOrderId) external"
+      ]);
+      const data = iface.encodeFunctionData("confirmMatch", [BigInt(buyOrder.id), BigInt(sellOrder.id)]);
+
+      const hash = await (wc as any).sendTransaction({
+        to: MATCHING_ENGINE_ADDRESS,
+        data,
+        gas: BigInt(3_000_000),
+      });
+
+      setMatchResult(`Match executed — TX: ${hash.slice(0, 10)}...`);
+      setMatchStatus("matched");
+      setMatchedOrders(prev => [...prev, { buyId: buyOrder.id, sellId: sellOrder.id, tx: hash }]);
+      if (onMatchSuccess) onMatchSuccess();
     } catch (e: any) {
-      setDecryptStatus("error");
+      setMatchStatus("error");
+      setMatchResult(e.shortMessage || e.message || "Match failed");
     }
   }
 
+  const openBuys = orders.filter((o: any) => o.side === "BUY" && o.status === "OPEN");
+  const openSells = orders.filter((o: any) => o.side === "SELL" && o.status === "OPEN");
+  const matched = orders.filter((o: any) => o.status === "MATCHED" || o.status === "SETTLED");
+
   return (
-    <Panel>
-      <PanelTitle>Settlement — Gateway Async Decrypt</PanelTitle>
-      <div style={{ fontSize: "0.75rem", color: textDim, lineHeight: 2, maxWidth: 560 }}>
-        <p style={{ marginBottom: "1rem" }}>
-          Settlement occurs via the <span style={{ color: Y }}>Zama Gateway</span> async decrypt flow. Only matched
-          orders trigger decryption. Counterparty identities remain encrypted using{" "}
-          <span style={{ color: Y }}>eaddress</span> type until settlement.
+    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem" }}>
+      <Panel>
+        <PanelTitle>Homomorphic Matching</PanelTitle>
+        <p style={{ fontSize: "0.58rem", color: textDim, lineHeight: 1.8, marginBottom: "1rem" }}>
+          The MatchingEngine uses <span style={{ color: Y }}>TFHE.le()</span> to compare encrypted prices.
+          Buy price vs sell price — all ciphertext, zero plaintext.
         </p>
-        <div
+
+        <div style={{ background: "rgba(245,200,0,0.04)", border: "1px solid rgba(245,200,0,0.1)", padding: "0.8rem", marginBottom: "1rem", fontSize: "0.58rem", color: textDim, fontFamily: "monospace" }}>
+          <div style={{ color: Y, marginBottom: "0.3rem", letterSpacing: "0.1em" }}>MATCHING FLOW</div>
+          <div style={{ lineHeight: 2 }}>
+            1. Place encrypted BUY/SELL orders<br />
+            2. confirmMatch() → auto-computes + executes<br />
+            3. executeMatch() → orders marked MATCHED<br />
+            4. Gateway decrypt → settleOrders()
+          </div>
+        </div>
+
+        <div style={{ marginBottom: "0.8rem" }}>
+          <div style={{ fontSize: "0.55rem", color: Y, marginBottom: "0.3rem" }}>OPEN ORDERS</div>
+          <div style={{ display: "flex", gap: "1rem", marginBottom: "0.5rem" }}>
+            <div>
+              <div style={{ fontSize: "0.5rem", color: green }}>BUY ({openBuys.length})</div>
+              {openBuys.map((o: any) => (
+                <div key={o.id} style={{ fontSize: "0.52rem", color: textDim, fontFamily: "monospace" }}>#{o.id}</div>
+              ))}
+            </div>
+            <div>
+              <div style={{ fontSize: "0.5rem", color: red }}>SELL ({openSells.length})</div>
+              {openSells.map((o: any) => (
+                <div key={o.id} style={{ fontSize: "0.52rem", color: textDim, fontFamily: "monospace" }}>#{o.id}</div>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        <button
+          onClick={handleMatchOrders}
+          disabled={matchStatus === "matching" || openBuys.length === 0 || openSells.length === 0}
           style={{
-            background: "rgba(245,200,0,0.04)",
-            border: "1px solid rgba(245,200,0,0.1)",
-            padding: "1rem",
-            fontFamily: "monospace",
-            fontSize: "0.65rem",
-            marginBottom: "1.2rem",
+            width: "100%",
+            padding: "0.7rem",
+            background: openBuys.length === 0 || openSells.length === 0 ? textMuted : matchStatus === "matching" ? Y : green,
+            color: matchStatus === "matching" ? ink : "#fff",
+            fontSize: "0.62rem",
+            fontWeight: 700,
+            letterSpacing: "0.15em",
+            border: "none",
+            cursor: "none",
+            fontFamily: "inherit",
           }}
         >
-          <div style={{ color: Y, marginBottom: "0.5rem", letterSpacing: "0.1em" }}>SETTLEMENT FLOW</div>
-          <div style={{ color: textDim, lineHeight: 2 }}>
-            1. Match found via homomorphic TFHE.ge()
-            <br />
-            2. requestSettlement() called by trader
-            <br />
-            3. Gateway.requestDecryption() triggered
-            <br />
-            4. settlementCallback() receives plaintext
-            <br />
-            5. Amounts revealed only to matched parties
+          {matchStatus === "matching" ? "MATCHING..." : "MATCH ORDERS"}
+        </button>
+
+        {matchResult && (
+          <div style={{
+            marginTop: "0.5rem",
+            padding: "0.5rem",
+            background: matchStatus === "error" ? "rgba(192,57,43,0.06)" : "rgba(39,174,96,0.06)",
+            border: `1px solid ${matchStatus === "error" ? "rgba(192,57,43,0.2)" : "rgba(39,174,96,0.2)"}`,
+            fontSize: "0.52rem",
+            color: matchStatus === "error" ? red : green,
+            fontFamily: "monospace",
+          }}>
+            {matchResult}
+          </div>
+        )}
+      </Panel>
+
+      <Panel>
+        <PanelTitle>Settlement — Gateway Decrypt</PanelTitle>
+        <p style={{ fontSize: "0.58rem", color: textDim, lineHeight: 1.8, marginBottom: "1rem" }}>
+          After matching, orders are settled via the <span style={{ color: Y }}>Zama Gateway</span> async decrypt.
+          KMS signers provide decryption proofs — only matched parties see plaintext.
+        </p>
+
+        <div style={{ background: "rgba(245,200,0,0.04)", border: "1px solid rgba(245,200,0,0.1)", padding: "0.8rem", marginBottom: "1rem", fontSize: "0.58rem", color: textDim, fontFamily: "monospace" }}>
+          <div style={{ color: Y, marginBottom: "0.3rem", letterSpacing: "0.1em" }}>SETTLEMENT FLOW</div>
+          <div style={{ lineHeight: 2 }}>
+            1. executeMatch() → orders marked MATCHED<br />
+            2. TFHE.allow() → handles decryptable<br />
+            3. Gateway.requestDecryption()<br />
+            4. KMS signs → onSettlementCallback()<br />
+            5. Orders marked SETTLED
           </div>
         </div>
 
-        <div style={{ marginBottom: "1rem" }}>
-          <div style={{ fontSize: "0.6rem", color: Y, letterSpacing: "0.15em", marginBottom: "0.5rem" }}>
-            DECRYPT YOUR ENCRYPTED DATA
-          </div>
-          <p style={{ fontSize: "0.58rem", color: textDim, marginBottom: "0.8rem" }}>
-            Use the FHEVM SDK to reencrypt and decrypt your own order data. Only your wallet can decrypt values where ACL permissions have been granted.
-          </p>
-          <button
-            onClick={handleDecrypt}
-            disabled={decryptStatus === "decrypting"}
-            style={{
-              padding: "0.65rem 1.4rem",
-              background: decryptStatus === "decrypting" ? textMuted : Y,
-              color: decryptStatus === "decrypting" ? "#3a2e0a" : ink,
-              fontSize: "0.62rem",
-              fontWeight: 700,
-              letterSpacing: "0.12em",
-              border: "none",
-              cursor: "none",
-              fontFamily: "inherit",
-            }}
-          >
-            {decryptStatus === "decrypting" ? "DECRYPTING..." : "DECRYPT MY ORDERS"}
-          </button>
+        <div style={{ marginBottom: "0.8rem" }}>
+          <div style={{ fontSize: "0.55rem", color: Y, marginBottom: "0.3rem" }}>MATCHED / SETTLED</div>
+          {matched.length === 0 ? (
+            <div style={{ fontSize: "0.52rem", color: textDim, textAlign: "center", padding: "1rem" }}>NO MATCHES YET</div>
+          ) : (
+            matched.map((o: any) => (
+              <div key={o.id} style={{
+                display: "flex", justifyContent: "space-between", padding: "0.4rem 0",
+                borderBottom: "1px solid rgba(245,200,0,0.05)", fontSize: "0.55rem"
+              }}>
+                <span style={{ fontFamily: "monospace", color: Y }}>#{o.id}</span>
+                <span style={{ color: o.side === "BUY" ? green : red }}>{o.side}</span>
+                <span style={{ color: o.status === "SETTLED" ? "#6ab0ff" : green }}>{o.status}</span>
+              </div>
+            ))
+          )}
         </div>
 
-        {decryptStatus === "done" && (
-          <div style={{ marginTop: "0.8rem", padding: "0.6rem", background: "rgba(39,174,96,0.06)", border: "1px solid rgba(39,174,96,0.2)", fontSize: "0.55rem", color: green }}>
-            ✓ DECRYPT SUCCESSFUL — Your encrypted values have been revealed
-            {decryptResult && (
-              <pre style={{ marginTop: "0.5rem", fontSize: "0.52rem", fontFamily: "monospace", overflow: "auto", maxHeight: 120 }}>
-                {decryptResult}
-              </pre>
-            )}
+        {matchedOrders.length > 0 && (
+          <div style={{ padding: "0.5rem", background: "rgba(39,174,96,0.06)", border: "1px solid rgba(39,174,96,0.2)", fontSize: "0.52rem", color: green, fontFamily: "monospace" }}>
+            <div style={{ color: Y, marginBottom: "0.2rem", letterSpacing: "0.1em" }}>SESSION MATCHES</div>
+            {matchedOrders.map((m, i) => (
+              <div key={i}>BUY #{m.buyId} ↔ SELL #{m.sellId}</div>
+            ))}
           </div>
         )}
-        {decryptStatus === "error" && (
-          <div style={{ marginTop: "0.8rem", padding: "0.6rem", background: "rgba(192,57,43,0.06)", border: "1px solid rgba(192,57,43,0.2)", fontSize: "0.55rem", color: red }}>
-            DECRYPT FAILED — No ACL permission or no encrypted data for this address
-          </div>
-        )}
-      </div>
-    </Panel>
+      </Panel>
+    </div>
   );
 }
 
 function RWATokensView() {
+  const tokenAddrs: Record<string, string> = {
+    cTBILL: RWA_ADDRESS,
+    cREAL: RWA_CREAL_ADDRESS,
+    cCARBON: RWA_CCARBON_ADDRESS,
+  };
   const tokens = [
     { symbol: "cTBILL", name: "US Treasury Bills", type: "treasury", jurisdiction: "US", maturity: "Rolling 90-day" },
     { symbol: "cREAL", name: "Real Estate", type: "real-estate", jurisdiction: "Global", maturity: "Perpetual" },
@@ -906,7 +1153,7 @@ function RWATokensView() {
             { label: "TYPE", val: t.type },
             { label: "JURISDICTION", val: t.jurisdiction },
             { label: "MATURITY", val: t.maturity },
-            { label: "CONTRACT", val: `${RWA_ADDRESS.slice(0, 8)}...` },
+            { label: "CONTRACT", val: `${tokenAddrs[t.symbol].slice(0, 8)}...` },
           ].map((r) => (
             <div
               key={r.label}
@@ -1127,17 +1374,32 @@ export default function Dashboard() {
   const [twapCount, setTwapCount] = useState(0);
   const [loadingOrders, setLoadingOrders] = useState(false);
   const [aiOrderData, setAiOrderData] = useState<{ side: "BUY" | "SELL"; token: string; amount: string; price: string; risk: string } | null>(null);
+  const [wrongChain, setWrongChain] = useState(false);
+  const [switchingChain, setSwitchingChain] = useState(false);
 
   const { address, isConnected, chain, connector } = useAccount();
   const { connect, isPending: isConnecting } = useConnect();
   const { disconnect } = useDisconnect();
+  const { switchChain } = useSwitchChain();
   const publicClient = usePublicClient();
-  const { data: walletClient } = useWalletClient({ connector: connector as any });
 
   useEffect(() => {
     setMounted(true);
     setTimeout(() => setBarsVisible(true), 300);
   }, []);
+
+  useEffect(() => {
+    if (mounted && isConnected && chain && chain.id !== sepolia.id) {
+      setWrongChain(true);
+      setSwitchingChain(true);
+      switchChain({ chainId: sepolia.id }, {
+        onSuccess: () => { setWrongChain(false); setSwitchingChain(false); },
+        onError: () => { setSwitchingChain(false); },
+      });
+    } else {
+      setWrongChain(false);
+    }
+  }, [mounted, isConnected, chain]);
 
   useEffect(() => {
     let rx = window.innerWidth / 2,
@@ -1169,7 +1431,6 @@ export default function Dashboard() {
   useEffect(() => {
     if (mounted && isConnected && address && publicClient) {
       loadOrders();
-      loadTWAP();
     }
   }, [mounted, isConnected, address]);
 
@@ -1193,7 +1454,6 @@ export default function Dashboard() {
       eventName: "OrderPlaced",
       onLogs: () => {
         loadOrders();
-        setTwapCount((prev) => prev + 1);
       },
     });
     return () => unwatch();
@@ -1222,6 +1482,7 @@ export default function Dashboard() {
             });
             return {
               id: id.toString(),
+              rwaToken: (meta as any)[1].toString().toLowerCase(),
               side: SIDES[(meta as any)[2]] || "BUY",
               status: STATUSES[(meta as any)[3]] || "OPEN",
               blockNumber: (meta as any)[4].toString(),
@@ -1229,6 +1490,17 @@ export default function Dashboard() {
           }),
       );
       setOrders(data);
+
+      // Load TWAP count from MatchingEngine
+      try {
+        const twap = await (publicClient as any).readContract({
+          address: MATCHING_ENGINE_ADDRESS,
+          abi: MATCHING_ENGINE_ABI,
+          functionName: "getTWAPCount",
+          args: [RWA_ADDRESS],
+        });
+        setTwapCount(Number(twap));
+      } catch {}
     } catch (e) {
       console.error(e);
     } finally {
@@ -1239,21 +1511,6 @@ export default function Dashboard() {
   function onAIFillOrder(data: { side: "BUY" | "SELL"; token: string; amount: string; price: string; risk: string }) {
     setAiOrderData(data);
     setActiveNav("Place Order");
-  }
-
-  async function loadTWAP() {
-    if (!publicClient) return;
-    try {
-      const c = await (publicClient as any).readContract({
-        address: DARKPOOL_ADDRESS,
-        abi: DARKPOOL_ABI,
-        functionName: "getTWAPCount",
-        args: [RWA_ADDRESS],
-      });
-      setTwapCount(Number(c));
-    } catch (e) {
-      console.error(e);
-    }
   }
 
   const shortAddr = address ? `${address.slice(0, 6)}...${address.slice(-4)}` : "";
@@ -1283,8 +1540,9 @@ export default function Dashboard() {
         return (
           <PlaceOrderView
             isConnected={isConnected}
-            walletClient={walletClient}
+            connector={connector}
             address={address}
+            chain={chain}
             publicClient={publicClient}
             mounted={mounted}
             onSuccess={() => {
@@ -1297,7 +1555,7 @@ export default function Dashboard() {
       case "Order Book":
         return <OrderHistoryView orders={orders} loadingOrders={loadingOrders} loadOrders={loadOrders} />;
       case "Settlement":
-        return <SettlementView orders={orders} address={address} />;
+        return <SettlementView orders={orders} address={address} connector={connector} isConnected={isConnected} chain={chain} publicClient={publicClient} />;
       case "RWA Tokens":
         return <RWATokensView />;
       case "Portfolio":
@@ -1388,7 +1646,8 @@ export default function Dashboard() {
             zIndex: 10,
           }}
         >
-          <div
+          <a
+            href="/"
             style={{
               display: "flex",
               alignItems: "center",
@@ -1396,6 +1655,8 @@ export default function Dashboard() {
               padding: "0 1.5rem 1.5rem",
               borderBottom: `1px solid ${gb}`,
               marginBottom: "1.5rem",
+              textDecoration: "none",
+              cursor: "none",
             }}
           >
             <div
@@ -1416,7 +1677,7 @@ export default function Dashboard() {
             <div style={{ fontSize: "0.95rem", fontWeight: 700, letterSpacing: "0.1em" }}>
               <span style={{ color: Y }}>CIPHER</span>RWA
             </div>
-          </div>
+          </a>
 
           <div
             style={{
@@ -1481,8 +1742,8 @@ export default function Dashboard() {
             {!mounted ? null : isConnected ? (
               <div
                 style={{
-                  background: "rgba(245,200,0,0.07)",
-                  border: "1px solid rgba(245,200,0,0.15)",
+                  background: wrongChain ? "rgba(192,57,43,0.1)" : "rgba(245,200,0,0.07)",
+                  border: `1px solid ${wrongChain ? "rgba(192,57,43,0.3)" : "rgba(245,200,0,0.15)"}`,
                   padding: "0.7rem 0.9rem",
                 }}
               >
@@ -1493,7 +1754,7 @@ export default function Dashboard() {
                 <div
                   style={{
                     fontSize: "0.5rem",
-                    color: textDim,
+                    color: wrongChain ? red : textDim,
                     marginTop: "0.2rem",
                     display: "flex",
                     alignItems: "center",
@@ -1505,13 +1766,35 @@ export default function Dashboard() {
                       width: 5,
                       height: 5,
                       borderRadius: "50%",
-                      background: green,
-                      boxShadow: `0 0 4px ${green}`,
+                      background: wrongChain ? red : green,
+                      boxShadow: `0 0 4px ${wrongChain ? red : green}`,
                       display: "inline-block",
                     }}
                   />
-                  {chain?.name || "Sepolia"}
+                  {wrongChain ? `WRONG NETWORK (ID: ${chain?.id})` : chain?.name || "Sepolia"}
                 </div>
+                {wrongChain && (
+                  <button
+                    onClick={() => switchChain({ chainId: sepolia.id })}
+                    disabled={switchingChain}
+                    style={{
+                      marginTop: "0.4rem",
+                      width: "100%",
+                      padding: "0.4rem",
+                      background: red,
+                      color: "#fff",
+                      fontSize: "0.55rem",
+                      fontWeight: 700,
+                      letterSpacing: "0.1em",
+                      border: "none",
+                      cursor: switchingChain ? "not-allowed" : "none",
+                      fontFamily: "inherit",
+                      opacity: switchingChain ? 0.6 : 1,
+                    }}
+                  >
+                    {switchingChain ? "SWITCHING..." : "⚠ SWITCH TO SEPOLIA"}
+                  </button>
+                )}
                 <button
                   onClick={() => disconnect()}
                   style={{
@@ -1519,7 +1802,7 @@ export default function Dashboard() {
                     width: "100%",
                     padding: "0.3rem",
                     background: "transparent",
-                    border: "1px solid rgba(245,200,0,0.15)",
+                    border: `1px solid ${wrongChain ? "rgba(192,57,43,0.3)" : "rgba(245,200,0,0.15)"}`,
                     color: textDim,
                     fontSize: "0.5rem",
                     letterSpacing: "0.1em",
@@ -1527,15 +1810,15 @@ export default function Dashboard() {
                     fontFamily: "inherit",
                     transition: "all 0.2s",
                   }}
-                  onMouseEnter={(e) => (e.currentTarget.style.borderColor = "rgba(245,200,0,0.4)")}
-                  onMouseLeave={(e) => (e.currentTarget.style.borderColor = "rgba(245,200,0,0.15)")}
+                  onMouseEnter={(e) => (e.currentTarget.style.borderColor = wrongChain ? "rgba(192,57,43,0.5)" : "rgba(245,200,0,0.4)")}
+                  onMouseLeave={(e) => (e.currentTarget.style.borderColor = wrongChain ? "rgba(192,57,43,0.3)" : "rgba(245,200,0,0.15)")}
                 >
                   DISCONNECT
                 </button>
               </div>
             ) : (
               <button
-                onClick={() => connect({ connector: injected() })}
+                onClick={() => connect({ connector: injected(), chainId: sepolia.id })}
                 disabled={isConnecting}
                 style={{
                   width: "100%",
@@ -1640,7 +1923,47 @@ export default function Dashboard() {
 
           {/* CONTENT */}
           <div style={{ flex: 1, overflowY: "auto", overflowX: "hidden", padding: "1.5rem 2rem 4rem" }}>
-            {!mounted ? null : !isConnected && activeNav !== "RWA Tokens" && activeNav !== "Settlement" ? (
+            {!mounted ? null : wrongChain ? (
+              <div
+                style={{
+                  background: "rgba(192,57,43,0.08)",
+                  border: "1px solid rgba(192,57,43,0.25)",
+                  padding: "1rem 1.4rem",
+                  marginBottom: "1.5rem",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                }}
+              >
+                <div>
+                  <div style={{ fontSize: "0.65rem", color: red, letterSpacing: "0.15em", marginBottom: "0.2rem" }}>
+                    ⚠ WRONG NETWORK DETECTED
+                  </div>
+                  <div style={{ fontSize: "0.58rem", color: textDim }}>
+                    Your wallet is on chain ID {chain?.id}. The FHE dark pool requires <b style={{ color: Y }}>Sepolia (11155111)</b>.
+                  </div>
+                </div>
+                <button
+                  onClick={() => switchToSepolia().then((ok) => { if (ok) setWrongChain(false); })}
+                  disabled={switchingChain}
+                  style={{
+                    padding: "0.6rem 1.4rem",
+                    background: red,
+                    color: "#fff",
+                    fontSize: "0.62rem",
+                    fontWeight: 700,
+                    letterSpacing: "0.12em",
+                    border: "none",
+                    cursor: switchingChain ? "not-allowed" : "none",
+                    fontFamily: "inherit",
+                    flexShrink: 0,
+                    marginLeft: "1rem",
+                  }}
+                >
+                  {switchingChain ? "SWITCHING..." : "SWITCH TO SEPOLIA"}
+                </button>
+              </div>
+            ) : !isConnected && activeNav !== "RWA Tokens" && activeNav !== "Settlement" ? (
               <div
                 style={{
                   background: "rgba(245,200,0,0.06)",
@@ -1661,7 +1984,7 @@ export default function Dashboard() {
                   </div>
                 </div>
                 <button
-                  onClick={() => connect({ connector: injected() })}
+                  onClick={() => connect({ connector: injected(), chainId: sepolia.id })}
                   style={{
                     padding: "0.6rem 1.4rem",
                     background: Y,
@@ -1705,13 +2028,19 @@ export default function Dashboard() {
           }}
         >
           <a href={`${SEPOLIA_SCAN}/address/${RWA_ADDRESS}`} target="_blank" rel="noopener noreferrer" style={{ color: Y, textDecoration: "none", cursor: "none" }}>
-            RWA: <b>0xd384...6194</b> ↗
+            cTBILL: <b>0x2e74...9164</b> ↗
+          </a>
+          <a href={`${SEPOLIA_SCAN}/address/${RWA_CREAL_ADDRESS}`} target="_blank" rel="noopener noreferrer" style={{ color: Y, textDecoration: "none", cursor: "none" }}>
+            cREAL: <b>0x43f6...F5B6</b> ↗
+          </a>
+          <a href={`${SEPOLIA_SCAN}/address/${RWA_CCARBON_ADDRESS}`} target="_blank" rel="noopener noreferrer" style={{ color: Y, textDecoration: "none", cursor: "none" }}>
+            cCARBON: <b>0x93F6...FB3b</b> ↗
           </a>
           <a href={`${SEPOLIA_SCAN}/address/${DARKPOOL_ADDRESS}`} target="_blank" rel="noopener noreferrer" style={{ color: Y, textDecoration: "none", cursor: "none" }}>
-            DARKPOOL: <b>0x855d...FD31</b> ↗
+            DARKPOOL: <b>0x318F...4e77</b> ↗
           </a>
           <a href={`${SEPOLIA_SCAN}/address/${MATCHING_ENGINE_ADDRESS}`} target="_blank" rel="noopener noreferrer" style={{ color: Y, textDecoration: "none", cursor: "none" }}>
-            ENGINE: <b>0xEE66...933d</b> ↗
+            ENGINE: <b>0xD482...6f0B</b> ↗
           </a>
           <span style={{ color: green, marginLeft: "auto", animation: "blink 3s infinite" }}>● LIVE ON SEPOLIA</span>
           <span style={{ color: Y, opacity: 0.5, fontSize: "0.42rem", letterSpacing: "0.08em" }}>

@@ -178,16 +178,34 @@ export default function CipherRWALanding() {
             CIPHER<span style={{ color: "#f0e6c0" }}>RWA</span>
           </div>
           <div style={{ display: "flex", gap: "2rem", fontSize: "0.65rem", letterSpacing: "0.2em", color: "#5a4e30" }}>
-            {["PROTOCOL", "DOCS", "GITHUB"].map((l) => (
-              <span
-                key={l}
-                style={{ cursor: "none", transition: "color 0.2s" }}
-                onMouseEnter={(e) => (e.currentTarget.style.color = Y)}
-                onMouseLeave={(e) => (e.currentTarget.style.color = "#5a4e30")}
-              >
-                {l}
-              </span>
-            ))}
+            <a
+              href="#services"
+              style={{ cursor: "none", transition: "color 0.2s", textDecoration: "none", color: "inherit" }}
+              onMouseEnter={(e) => (e.currentTarget.style.color = Y)}
+              onMouseLeave={(e) => (e.currentTarget.style.color = "#5a4e30")}
+            >
+              PROTOCOL
+            </a>
+            <a
+              href="https://docs.zama.ai/fhevm"
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{ cursor: "none", transition: "color 0.2s", textDecoration: "none", color: "inherit" }}
+              onMouseEnter={(e) => (e.currentTarget.style.color = Y)}
+              onMouseLeave={(e) => (e.currentTarget.style.color = "#5a4e30")}
+            >
+              DOCS
+            </a>
+            <a
+              href="https://github.com/glassmahn/cipherrwa-darkpool"
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{ cursor: "none", transition: "color 0.2s", textDecoration: "none", color: "inherit" }}
+              onMouseEnter={(e) => (e.currentTarget.style.color = Y)}
+              onMouseLeave={(e) => (e.currentTarget.style.color = "#5a4e30")}
+            >
+              GITHUB
+            </a>
           </div>
           <a
             href="/dashboard"
@@ -472,9 +490,11 @@ export default function CipherRWALanding() {
                 </div>
 
                 {[
-                  { label: "RWA TOKEN CONTRACT", addr: "0xd38489433B393F80281f5F59Abd9B82CCacE6194" },
-                  { label: "DARK POOL CONTRACT", addr: "0x855dA715F3182f9A105343c91F80ba1B435BfD31" },
-                  { label: "MATCHING ENGINE", addr: "0xEE66574d63535a344A0b044734fC2Ec0Be2a933d" },
+                  { label: "cTBILL TOKEN", addr: "0x2e74A6F0e739B6F61f8c143385d4D80e8f3D9164" },
+                  { label: "cREAL TOKEN", addr: "0x43f6F3D8e12265ABc4eCa455662ac8ce2188F5B6" },
+                  { label: "cCARBON TOKEN", addr: "0x93F67cEa9B0f231AA4d23e494066530Ab0A8fB3b" },
+                  { label: "DARK POOL CONTRACT", addr: "0x318F23D39fd29e31a503A2A190Cff95C069E4e77" },
+                  { label: "MATCHING ENGINE", addr: "0xD482e2286efd826E42609A9E9641434c5a696f0B" },
                 ].map((c) => (
                   <a
                     key={c.label}
@@ -825,14 +845,20 @@ export default function CipherRWALanding() {
             color: "#3a2e0a",
           }}
         >
-          <a href="https://sepolia.etherscan.io/address/0xd38489433B393F80281f5F59Abd9B82CCacE6194" target="_blank" rel="noopener noreferrer" style={{ color: Y, textDecoration: "none", cursor: "none" }}>
-            RWA: 0xd384...6194 ↗
+          <a href="https://sepolia.etherscan.io/address/0x2e74A6F0e739B6F61f8c143385d4D80e8f3D9164" target="_blank" rel="noopener noreferrer" style={{ color: Y, textDecoration: "none", cursor: "none" }}>
+            cTBILL: 0x2e74...9164 ↗
           </a>
-          <a href="https://sepolia.etherscan.io/address/0x855dA715F3182f9A105343c91F80ba1B435BfD31" target="_blank" rel="noopener noreferrer" style={{ color: Y, textDecoration: "none", cursor: "none" }}>
-            DARKPOOL: 0x855d...FD31 ↗
+          <a href="https://sepolia.etherscan.io/address/0x43f6F3D8e12265ABc4eCa455662ac8ce2188F5B6" target="_blank" rel="noopener noreferrer" style={{ color: Y, textDecoration: "none", cursor: "none" }}>
+            cREAL: 0x43f6...F5B6 ↗
           </a>
-          <a href="https://sepolia.etherscan.io/address/0xEE66574d63535a344A0b044734fC2Ec0Be2a933d" target="_blank" rel="noopener noreferrer" style={{ color: Y, textDecoration: "none", cursor: "none" }}>
-            ENGINE: 0xEE66...933d ↗
+          <a href="https://sepolia.etherscan.io/address/0x93F67cEa9B0f231AA4d23e494066530Ab0A8fB3b" target="_blank" rel="noopener noreferrer" style={{ color: Y, textDecoration: "none", cursor: "none" }}>
+            cCARBON: 0x93F6...FB3b ↗
+          </a>
+          <a href="https://sepolia.etherscan.io/address/0x318F23D39fd29e31a503A2A190Cff95C069E4e77" target="_blank" rel="noopener noreferrer" style={{ color: Y, textDecoration: "none", cursor: "none" }}>
+            DARKPOOL: 0x318F...4e77 ↗
+          </a>
+          <a href="https://sepolia.etherscan.io/address/0xD482e2286efd826E42609A9E9641434c5a696f0B" target="_blank" rel="noopener noreferrer" style={{ color: Y, textDecoration: "none", cursor: "none" }}>
+            ENGINE: 0xD482...6f0B ↗
           </a>
           <span style={{ color: green, marginLeft: "auto", animation: "blink 3s infinite" }}>● LIVE ON SEPOLIA</span>
           <span style={{ color: Y, opacity: 0.6, fontSize: "0.45rem", letterSpacing: "0.1em" }}>
