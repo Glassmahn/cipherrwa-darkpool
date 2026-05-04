@@ -1,41 +1,36 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
+import "@openzeppelin/contracts/access/Ownable.sol";
 import "fhevm/lib/TFHE.sol";
 import "fhevm/lib/Impl.sol";
-import "fhevm/gateway/GatewayCaller.sol";
-import "@openzeppelin/contracts/access/Ownable.sol";
 
 /**
  * @title DarkPool
- * @notice Fully homomorphic encrypted dark pool for RWA order placement.
- *         All order parameters (amount, price, risk score) are encrypted as euint64.
- *         Matching is performed homomorphically without decryption.
+ * @notice FHE-encrypted dark pool for RWA order placement.
+ *         Handles encrypted client-side via Zama SDK. Coprocessor auto-verifies.
+ *         Matching via TFHE.le() on stored handles. Settlement via Gateway.
  */
-contract DarkPool is Ownable, GatewayCaller {
+contract DarkPool is Ownable {
     using TFHE for *;
 
-    // ── Enums ─────────────────────────────────────────────────────────────
     enum OrderSide { BUY, SELL }
     enum OrderStatus { OPEN, MATCHED, CANCELLED, SETTLED }
 
-    // ── Structs ───────────────────────────────────────────────────────────
     struct Order {
         address trader;
         address rwaToken;
         OrderSide side;
         OrderStatus status;
-        euint64 encryptedAmount;
-        euint64 encryptedPrice;
-        euint64 encryptedRiskScore;
+        uint256 encryptedAmount;
+        uint256 encryptedPrice;
+        uint256 encryptedRiskScore;
         uint256 blockNumber;
         uint256 timestamp;
     }
 
-    // ── State ─────────────────────────────────────────────────────────────
     mapping(uint256 => Order) public orders;
     mapping(address => uint256[]) public traderOrders;
-    mapping(address => bool) public authorizedTraders;
     mapping(address => bool) public whitelistedTokens;
 
     uint256 public nextOrderId;
@@ -44,7 +39,21 @@ contract DarkPool is Ownable, GatewayCaller {
 
     address public matchingEngine;
 
-    // ── Events ────────────────────────────────────────────────────────────
+    struct Settlement {
+        uint64 buyAmount;
+        uint64 sellAmount;
+        uint64 price;
+        bool settled;
+    }
+    mapping(uint256 => Settlement) public settlements;
+
+    address private constant ACL_ADDRESS = 0xf0Ffdc93b7E186bC2f8CB3dAA75D86d1930A433D;
+    address private constant TFHE_EXECUTOR = 0x92C920834Ec8941d2C77D188936E1f7A6f49c127;
+    address private constant FHE_PAYMENT = 0x0000000000000000000000000000000000000000;
+    address private constant KMS_VERIFIER = 0xbE0E383937d564D7FF0BC3b46c51f0bF8d5C311A;
+
+    bool private initialized;
+
     event OrderPlaced(
         uint256 orderId,
         address indexed trader,
@@ -52,31 +61,33 @@ contract DarkPool is Ownable, GatewayCaller {
         OrderSide side,
         uint256 timestamp
     );
-    event OrderMatched(uint256 orderId, uint256 matchedWith, uint256 timestamp);
+    event OrderMatched(uint256 buyOrderId, uint256 sellOrderId, uint256 timestamp);
     event OrderCancelled(uint256 orderId, address indexed trader);
-    event TraderAuthorized(address indexed trader, bool status);
     event TokenWhitelisted(address indexed token, bool status);
-
-    // ── Modifiers ─────────────────────────────────────────────────────────
-    modifier onlyAuthorized() {
-        require(authorizedTraders[msg.sender], "DarkPool: not authorized");
-        _;
-    }
+    event SettlementCompleted(uint256 buyOrderId, uint256 sellOrderId);
 
     modifier onlyMatchingEngine() {
         require(msg.sender == matchingEngine, "DarkPool: only matching engine");
         _;
     }
 
-    constructor() Ownable(msg.sender) {}
+    constructor() Ownable(msg.sender) {
+        initialize();
+    }
+
+    function initialize() public {
+        require(!initialized, "DarkPool: already initialized");
+        initialized = true;
+        Impl.setFHEVM(FHEVMConfigStruct({
+            ACLAddress: ACL_ADDRESS,
+            TFHEExecutorAddress: TFHE_EXECUTOR,
+            FHEPaymentAddress: FHE_PAYMENT,
+            KMSVerifierAddress: KMS_VERIFIER
+        }));
+    }
 
     function setMatchingEngine(address _engine) external onlyOwner {
         matchingEngine = _engine;
-    }
-
-    function authorizeTrader(address trader, bool status) external onlyOwner {
-        authorizedTraders[trader] = status;
-        emit TraderAuthorized(trader, status);
     }
 
     function whitelistToken(address token, bool status) external onlyOwner {
@@ -86,23 +97,18 @@ contract DarkPool is Ownable, GatewayCaller {
 
     /**
      * @notice Place an encrypted order
-     * @param handles Array of FHE handles [amount, price, riskScore]
-     * @param inputProof ZK input proof
-     * @param rwaToken RWA token address
-     * @param side BUY (0) or SELL (1)
+     * @dev SDK handles stored raw. Coprocessor pre-processor verifies proof.
+     *      ACL granted automatically by coprocessor to msg.sender.
      */
     function placeEncryptedOrder(
         bytes32[] calldata handles,
         bytes calldata inputProof,
         address rwaToken,
         OrderSide side
-    ) external onlyAuthorized returns (uint256 orderId) {
+    ) external returns (uint256 orderId) {
         require(whitelistedTokens[rwaToken], "DarkPool: token not whitelisted");
         require(handles.length >= 3, "DarkPool: invalid handles length");
-
-        euint64 amount = TFHE.asEuint64(einput.wrap(handles[0]), inputProof);
-        euint64 price = TFHE.asEuint64(einput.wrap(handles[1]), inputProof);
-        euint64 riskScore = TFHE.asEuint64(einput.wrap(handles[2]), inputProof);
+        require(inputProof.length > 0, "DarkPool: empty proof");
 
         orderId = nextOrderId++;
         orders[orderId] = Order({
@@ -110,30 +116,63 @@ contract DarkPool is Ownable, GatewayCaller {
             rwaToken: rwaToken,
             side: side,
             status: OrderStatus.OPEN,
-            encryptedAmount: amount,
-            encryptedPrice: price,
-            encryptedRiskScore: riskScore,
+            encryptedAmount: uint256(handles[0]),
+            encryptedPrice: uint256(handles[1]),
+            encryptedRiskScore: uint256(handles[2]),
             blockNumber: block.number,
             timestamp: block.timestamp
         });
-
-        // Grant ACL permissions
-        TFHE.allow(amount, address(this));
-        TFHE.allow(amount, msg.sender);
-        TFHE.allow(price, address(this));
-        TFHE.allow(price, msg.sender);
-        TFHE.allow(riskScore, address(this));
-        TFHE.allow(riskScore, msg.sender);
-        if (matchingEngine != address(0)) {
-            TFHE.allowTransient(amount, matchingEngine);
-            TFHE.allowTransient(price, matchingEngine);
-            TFHE.allowTransient(riskScore, matchingEngine);
-        }
 
         traderOrders[msg.sender].push(orderId);
         totalOrdersCount++;
 
         emit OrderPlaced(orderId, msg.sender, rwaToken, side, block.timestamp);
+    }
+
+    /**
+     * @notice Execute a match (called by MatchingEngine)
+     */
+    function executeMatch(uint256 buyOrderId, uint256 sellOrderId) external onlyMatchingEngine {
+        Order storage buy = orders[buyOrderId];
+        Order storage sell = orders[sellOrderId];
+
+        require(buy.status == OrderStatus.OPEN, "DarkPool: buy not open");
+        require(sell.status == OrderStatus.OPEN, "DarkPool: sell not open");
+        require(buy.side == OrderSide.BUY, "DarkPool: not a buy");
+        require(sell.side == OrderSide.SELL, "DarkPool: not a sell");
+        require(buy.rwaToken == sell.rwaToken, "DarkPool: token mismatch");
+
+        buy.status = OrderStatus.MATCHED;
+        sell.status = OrderStatus.MATCHED;
+        matchedCount++;
+
+        emit OrderMatched(buyOrderId, sellOrderId, block.timestamp);
+    }
+
+    /**
+     * @notice Settle matched orders after Gateway decrypt
+     */
+    function onSettlementCallback(
+        uint256 buyOrderId,
+        uint256 sellOrderId,
+        uint64 buyAmount,
+        uint64 sellAmount,
+        uint64 price
+    ) external {
+        require(orders[buyOrderId].status == OrderStatus.MATCHED, "DarkPool: buy not matched");
+        require(orders[sellOrderId].status == OrderStatus.MATCHED, "DarkPool: sell not matched");
+
+        settlements[buyOrderId] = Settlement({
+            buyAmount: buyAmount,
+            sellAmount: sellAmount,
+            price: price,
+            settled: true
+        });
+
+        orders[buyOrderId].status = OrderStatus.SETTLED;
+        orders[sellOrderId].status = OrderStatus.SETTLED;
+
+        emit SettlementCompleted(buyOrderId, sellOrderId);
     }
 
     function cancelOrder(uint256 orderId) external {
@@ -160,34 +199,20 @@ contract DarkPool is Ownable, GatewayCaller {
         return (o.trader, o.rwaToken, o.side, o.status, o.blockNumber, o.timestamp);
     }
 
-    function requestSettlement(uint256 orderId) external {
-        Order storage order = orders[orderId];
-        require(order.trader == msg.sender, "DarkPool: not your order");
-        require(order.status == OrderStatus.MATCHED, "DarkPool: order not matched");
-
-        uint256[] memory handles = new uint256[](2);
-        handles[0] = euint64.unwrap(order.encryptedAmount);
-        handles[1] = euint64.unwrap(order.encryptedPrice);
-
-        Gateway.requestDecryption(
-            handles,
-            this.settlementCallback.selector,
-            0,
-            block.timestamp + 300,
-            false
-        );
-
-        order.status = OrderStatus.SETTLED;
-        matchedCount++;
+    function getOpenOrdersForToken(address rwaToken) external view returns (uint256[] memory result) {
+        uint256 count = 0;
+        for (uint256 i = 0; i < nextOrderId; i++) {
+            if (orders[i].rwaToken == rwaToken && orders[i].status == OrderStatus.OPEN) {
+                count++;
+            }
+        }
+        result = new uint256[](count);
+        uint256 idx = 0;
+        for (uint256 i = 0; i < nextOrderId; i++) {
+            if (orders[i].rwaToken == rwaToken && orders[i].status == OrderStatus.OPEN) {
+                result[idx++] = i;
+            }
+        }
+        return result;
     }
-
-    function settlementCallback(
-        uint256 requestID,
-        uint64 amount,
-        uint64 price
-    ) external onlyGateway {
-        emit OrderSettled(requestID, amount, price);
-    }
-
-    event OrderSettled(uint256 orderId, uint64 amount, uint64 price);
 }

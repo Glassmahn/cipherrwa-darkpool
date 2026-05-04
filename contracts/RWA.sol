@@ -37,6 +37,13 @@ contract RWA is Ownable {
     event Whitelisted(address indexed account, bool status);
     event Minted(address indexed to, uint256 amount);
 
+    address private constant ACL_ADDRESS = 0xf0Ffdc93b7E186bC2f8CB3dAA75D86d1930A433D;
+    address private constant TFHE_EXECUTOR = 0x92C920834Ec8941d2C77D188936E1f7A6f49c127;
+    address private constant FHE_PAYMENT = 0x0000000000000000000000000000000000000000;
+    address private constant KMS_VERIFIER = 0xbE0E383937d564D7FF0BC3b46c51f0bF8d5C311A;
+
+    bool private initialized;
+
     constructor(
         string memory _name,
         string memory _symbol,
@@ -49,6 +56,18 @@ contract RWA is Ownable {
         assetType = _assetType;
         jurisdiction = _jurisdiction;
         maturity = _maturity;
+        initialize();
+    }
+
+    function initialize() public {
+        require(!initialized, "RWA: already initialized");
+        initialized = true;
+        Impl.setFHEVM(FHEVMConfigStruct({
+            ACLAddress: ACL_ADDRESS,
+            TFHEExecutorAddress: TFHE_EXECUTOR,
+            FHEPaymentAddress: FHE_PAYMENT,
+            KMSVerifierAddress: KMS_VERIFIER
+        }));
     }
 
     modifier onlyWhitelisted() {

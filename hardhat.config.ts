@@ -22,6 +22,8 @@ const config: HardhatUserConfig = {
       accounts: process.env.PRIVATE_KEY ? [process.env.PRIVATE_KEY] : [],
       chainId: 11155111,
       type: "http",
+      gasPrice: "auto",
+      timeout: 120000,
     } as any,
   },
   paths: {
