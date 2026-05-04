@@ -7,7 +7,6 @@ const nextConfig = {
   eslint: {
     ignoreDuringBuilds: true,
   },
-  serverExternalPackages: ["@zama-fhe/relayer-sdk"],
   async headers() {
     return [
       {
