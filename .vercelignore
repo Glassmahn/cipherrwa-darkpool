@@ -1,0 +1,19 @@
+# Hardhat
+contracts/
+test/
+deploy/
+scripts/
+hardhat.config.ts
+artifacts/
+cache/
+fhevmTemp/
+
+# Docs
+docs/
+README.md
+AGENTS.md
+CLAUDE.md
+
+# Config
+.gitignore
+tsconfig.tsbuildinfo
