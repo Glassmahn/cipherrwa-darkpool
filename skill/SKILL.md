@@ -7,9 +7,11 @@ CipherRWA Encrypted Order Agent
 An AI agent that generates fully homomorphic encrypted RWA orders for the CipherRWA Dark Pool. Accepts natural language trading instructions and outputs encrypted handles, ZK proofs, and contract-ready transaction payloads for confidential placement of cTBILL, cREAL, and cCARBON orders on Sepolia via Zama FHEVM.
 
 ## contractAddresses
-- DarkPool: `0x855dA715F3182f9A105343c91F80ba1B435BfD31`
-- RWA Token: `0xd38489433B393F80281f5F59Abd9B82CCacE6194`
-- MatchingEngine: `0xEE66574d63535a344A0b044734fC2Ec0Be2a933d`
+- DarkPool: `0x318F23D39fd29e31a503A2A190Cff95C069E4e77`
+- cTBILL Token: `0x2e74A6F0e739B6F61f8c143385d4D80e8f3D9164`
+- cREAL Token: `0x43f6F3D8e12265ABc4eCa455662ac8ce2188F5B6`
+- cCARBON Token: `0x93F67cEa9B0f231AA4d23e494066530Ab0A8fB3b`
+- MatchingEngine: `0xD482e2286efd826E42609A9E9641434c5a696f0B`
 - Network: Sepolia (Chain ID 11155111)
 
 ## examplePrompts

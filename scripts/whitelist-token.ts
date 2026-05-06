@@ -2,8 +2,8 @@ import pkg from "hardhat";
 const { ethers } = pkg;
 
 async function main() {
-  const DARKPOOL = "0x0C23295BdA3cd43735c911a098458dD6f617f27d";
-  const RWA = "0x36e40621B4dd645354860cDa8562bbD3ac3c56B9";
+  const DARKPOOL = "0x318F23D39fd29e31a503A2A190Cff95C069E4e77";
+  const RWA = "0x2e74A6F0e739B6F61f8c143385d4D80e8f3D9164";
 
   const [signer] = await ethers.getSigners();
   console.log("Whitelisting from:", signer.address);
