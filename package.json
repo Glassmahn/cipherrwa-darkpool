@@ -15,8 +15,8 @@
     "next": "^15.3.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
-    "viem": "^2.48.4",
-    "wagmi": "^3.6.4"
+    "viem": "^2.21.0",
+    "wagmi": "^2.14.0"
   },
   "devDependencies": {
     "@fhevm/hardhat-plugin": "^0.4.2",
